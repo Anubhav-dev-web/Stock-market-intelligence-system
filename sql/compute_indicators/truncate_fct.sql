@@ -1,0 +1,1 @@
+TRUNCATE analytics.fct_daily_prices RESTART IDENTITY

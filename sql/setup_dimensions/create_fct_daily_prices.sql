@@ -1,0 +1,30 @@
+CREATE TABLE IF NOT EXISTS analytics.fct_daily_prices (
+    price_key           BIGSERIAL PRIMARY KEY,
+    ticker              VARCHAR(30)  NOT NULL,
+    date_key            INTEGER      REFERENCES analytics.dim_dates(date_key),
+    company_key         INTEGER      REFERENCES analytics.dim_companies(company_key),
+    open_price          NUMERIC(12,4),
+    high_price          NUMERIC(12,4),
+    low_price           NUMERIC(12,4),
+    close_price         NUMERIC(12,4),
+    adj_close           NUMERIC(12,4),
+    volume              BIGINT,
+    daily_return_pct    NUMERIC(8,4),
+    weekly_return_pct   NUMERIC(8,4),
+    monthly_return_pct  NUMERIC(8,4),
+    ma_20               NUMERIC(12,4),
+    ma_50               NUMERIC(12,4),
+    ma_200              NUMERIC(12,4),
+    bb_upper            NUMERIC(12,4),
+    bb_lower            NUMERIC(12,4),
+    rsi_14              NUMERIC(6,2),
+    high_52w            NUMERIC(12,4),
+    low_52w             NUMERIC(12,4),
+    pct_from_52w_high   NUMERIC(8,4),
+    trend_signal        VARCHAR(20),
+    rsi_zone            VARCHAR(15),
+    loaded_at           TIMESTAMP DEFAULT NOW(),
+    UNIQUE(ticker, date_key)
+);
+CREATE INDEX IF NOT EXISTS idx_fct_ticker ON analytics.fct_daily_prices(ticker);
+CREATE INDEX IF NOT EXISTS idx_fct_date   ON analytics.fct_daily_prices(date_key);
