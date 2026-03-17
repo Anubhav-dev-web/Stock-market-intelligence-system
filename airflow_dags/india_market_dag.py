@@ -1,41 +1,57 @@
-from airflow import DAG
-from airflow.operators.bash import BashOperator
+import os
+import shlex
+import sys
 from datetime import datetime, timedelta
+from pathlib import Path
 
-PROJECT_DIR = "/home/maximus/india_market"
-PYTHON_BIN  = "/home/maximus/airflow_venv/bin/python"
+from airflow import DAG
+
+try:
+    from airflow.providers.standard.operators.bash import BashOperator
+except ImportError:
+    from airflow.operators.bash import BashOperator
+
+PROJECT_DIR = Path(os.getenv("INDIA_MARKET_PROJECT_DIR", Path(__file__).resolve().parents[1]))
+PYTHON_BIN = os.getenv("INDIA_MARKET_PYTHON_BIN", sys.executable)
+
+
+def command(script_name: str) -> str:
+    project_dir = shlex.quote(str(PROJECT_DIR))
+    python_bin = shlex.quote(PYTHON_BIN)
+    script_path = shlex.quote(f"pipelines/{script_name}")
+    return f"cd {project_dir} && {python_bin} {script_path}"
+
 
 default_args = {
-    'owner':             'india-market',
-    'retries':           2,
-    'retry_delay':       timedelta(minutes=5),
-    'execution_timeout': timedelta(hours=2),
-    'email_on_failure':  False,
+    "owner": "india-market",
+    "retries": 2,
+    "retry_delay": timedelta(minutes=5),
+    "execution_timeout": timedelta(hours=2),
+    "email_on_failure": False,
 }
 
 with DAG(
-    dag_id            = 'india_market_daily',
-    default_args      = default_args,
-    description       = 'Daily NSE refresh after market close',
-    schedule_interval = '30 10 * * 1-5',
-    start_date        = datetime(2026, 3, 15),
-    catchup           = False,
-    tags              = ['india', 'nse', 'production'],
+    dag_id="india_market_daily",
+    default_args=default_args,
+    description="Daily NSE refresh after market close",
+    schedule="30 10 * * 1-5",
+    start_date=datetime(2026, 3, 15),
+    catchup=False,
+    tags=["india", "nse", "production"],
 ) as dag:
-
-    t1 = BashOperator(
-        task_id      = 'fetch_latest_prices',
-        bash_command = f'cd {PROJECT_DIR} && {PYTHON_BIN} pipelines/daily_refresh.py',
+    fetch_latest_prices = BashOperator(
+        task_id="fetch_latest_prices",
+        bash_command=command("daily_refresh.py"),
     )
 
-    t2 = BashOperator(
-        task_id      = 'compute_indicators',
-        bash_command = f'cd {PROJECT_DIR} && {PYTHON_BIN} pipelines/compute_indicators.py',
+    compute_indicators = BashOperator(
+        task_id="compute_indicators",
+        bash_command=command("compute_indicators.py"),
     )
 
-    t3 = BashOperator(
-        task_id      = 'create_views',
-        bash_command = f'cd {PROJECT_DIR} && {PYTHON_BIN} pipelines/create_views.py',
+    create_views = BashOperator(
+        task_id="create_views",
+        bash_command=command("create_views.py"),
     )
 
-    t1 >> t2 >> t3
+    fetch_latest_prices >> compute_indicators >> create_views

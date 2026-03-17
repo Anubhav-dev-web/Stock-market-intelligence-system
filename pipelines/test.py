@@ -1,7 +1,8 @@
-# verify_final.py
-from sqlalchemy import create_engine, text
-from dotenv import load_dotenv
 import os
+
+from dotenv import load_dotenv
+from sqlalchemy import create_engine, text
+
 from sql_loader import load_sql
 
 load_dotenv()
@@ -11,8 +12,8 @@ engine = create_engine(
 )
 
 with engine.connect() as conn:
-    result = conn.execute(text(load_sql('test/sector_summary.sql')))
+    result = conn.execute(text(load_sql("test/sector_summary.sql")))
     print(f"\n{'Sector':<12} {'Tickers':>8} {'Rows':>10} {'From':>12} {'To':>12}")
     print("-" * 58)
-    for r in result:
-        print(f"{r[0]:<12} {r[1]:>8} {r[2]:>10,} {str(r[3]):>12} {str(r[4]):>12}")
+    for row in result:
+        print(f"{row[0]:<12} {row[1]:>8} {row[2]:>10,} {str(row[3]):>12} {str(row[4]):>12}")

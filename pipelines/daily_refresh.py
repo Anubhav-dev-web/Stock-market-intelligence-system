@@ -1,14 +1,19 @@
-# pipelines/daily_refresh.py
-import yfinance as yf
+import logging
+import os
+import time
+from datetime import UTC, date, datetime
+
 import pandas as pd
-from sqlalchemy import create_engine, text
-from datetime import datetime, date
+import yfinance as yf
 from dotenv import load_dotenv
-import os, logging, time
+from sqlalchemy import create_engine, text
+
+from market_universe import ALL_TICKERS, SECTOR_MAP
+from runtime_guard import validate_runtime
+from sql_loader import load_sql
 
 load_dotenv()
-logging.basicConfig(level=logging.INFO,
-                    format='%(asctime)s | %(levelname)s | %(message)s')
+logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 logger = logging.getLogger(__name__)
 
 engine = create_engine(
@@ -16,95 +21,72 @@ engine = create_engine(
     f"@{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}/{os.getenv('DB_NAME')}"
 )
 
-SECTOR_MAP = {
-    'TCS.NS':'IT','INFY.NS':'IT','WIPRO.NS':'IT','HCLTECH.NS':'IT',
-    'TECHM.NS':'IT','LTIM.NS':'IT','MPHASIS.NS':'IT','PERSISTENT.NS':'IT',
-    'COFORGE.NS':'IT','OFSS.NS':'IT',
-    'HDFCBANK.NS':'Banking','ICICIBANK.NS':'Banking','KOTAKBANK.NS':'Banking',
-    'SBIN.NS':'Banking','AXISBANK.NS':'Banking','BAJFINANCE.NS':'Banking',
-    'BAJAJFINSV.NS':'Banking','INDUSINDBK.NS':'Banking','PNB.NS':'Banking',
-    'HDFCLIFE.NS':'Banking',
-    'SUNPHARMA.NS':'Pharma','DRREDDY.NS':'Pharma','CIPLA.NS':'Pharma',
-    'DIVISLAB.NS':'Pharma','APOLLOHOSP.NS':'Pharma','TORNTPHARM.NS':'Pharma',
-    'AUROPHARMA.NS':'Pharma','LUPIN.NS':'Pharma','BIOCON.NS':'Pharma',
-    'MAXHEALTH.NS':'Pharma',
-    'RELIANCE.NS':'Energy','ONGC.NS':'Energy','NTPC.NS':'Energy',
-    'POWERGRID.NS':'Energy','IOC.NS':'Energy','ADANIGREEN.NS':'Energy',
-    'TATAPOWER.NS':'Energy','COALINDIA.NS':'Energy','BPCL.NS':'Energy',
-    'ADANIPORTS.NS':'Energy',
-    'HINDUNILVR.NS':'FMCG','ITC.NS':'FMCG','NESTLEIND.NS':'FMCG',
-    'BRITANNIA.NS':'FMCG','DABUR.NS':'FMCG','MARICO.NS':'FMCG',
-    'GODREJCP.NS':'FMCG','COLPAL.NS':'FMCG','EMAMILTD.NS':'FMCG',
-    'TATACONSUM.NS':'FMCG',
-    'GC=F':'Commodity','CL=F':'Commodity','SI=F':'Commodity',
-    '^NSEI':'Index','^BSESN':'Index','^NSEBANK':'Index',
-    '^CNXIT':'Index','^INDIAVIX':'Index','USDINR=X':'Index',
-}
+UPSERT_MARKET_PRICE_SQL = text(load_sql("daily_refresh/upsert_market_price.sql"))
 
-ALL_TICKERS = list(SECTOR_MAP.keys())
+
+def utc_now():
+    return datetime.now(UTC)
+
 
 def refresh_ticker(ticker: str) -> int:
     try:
-        t  = yf.Ticker(ticker)
-        df = t.history(period='5d', auto_adjust=False)
-        if df is None or df.empty:
+        history = yf.Ticker(ticker).history(period="5d", auto_adjust=False)
+        if history is None or history.empty:
+            logger.warning("No data returned for %s", ticker)
             return 0
 
-        df.reset_index(inplace=True)
-        df.columns    = [c.lower().replace(' ','_') for c in df.columns]
-        df['date']    = pd.to_datetime(df['date']).dt.date
-        df['ticker']  = ticker
-        df['sector']  = SECTOR_MAP.get(ticker, 'Unknown')
-        df = df.dropna(subset=['close'])
+        df = history.reset_index()
+        df.columns = [column.lower().replace(" ", "_") for column in df.columns]
+        df["date"] = pd.to_datetime(df["date"]).dt.date
+        df["ticker"] = ticker
+        df["sector"] = SECTOR_MAP.get(ticker, "Unknown")
+        df["loaded_at"] = utc_now()
+        df = df.dropna(subset=["close"])
 
-        inserted = 0
+        if df.empty:
+            logger.warning("No usable close prices found for %s", ticker)
+            return 0
+
+        processed_rows = 0
         with engine.begin() as conn:
             for _, row in df.iterrows():
-                conn.execute(text("""
-                    INSERT INTO raw.market_prices
-                        (ticker, sector, date, open, high, low,
-                         close, adj_close, volume)
-                    VALUES
-                        (:ticker, :sector, :date, :open, :high, :low,
-                         :close, :adj_close, :volume)
-                    ON CONFLICT (ticker, date) DO UPDATE SET
-                        open      = EXCLUDED.open,
-                        high      = EXCLUDED.high,
-                        low       = EXCLUDED.low,
-                        close     = EXCLUDED.close,
-                        adj_close = EXCLUDED.adj_close,
-                        volume    = EXCLUDED.volume
-                """), {
-                    'ticker':    ticker,
-                    'sector':    SECTOR_MAP.get(ticker, 'Unknown'),
-                    'date':      row['date'],
-                    'open':      float(row['open'])      if pd.notna(row.get('open'))      else None,
-                    'high':      float(row['high'])      if pd.notna(row.get('high'))      else None,
-                    'low':       float(row['low'])       if pd.notna(row.get('low'))       else None,
-                    'close':     float(row['close'])     if pd.notna(row.get('close'))     else None,
-                    'adj_close': float(row['adj_close']) if pd.notna(row.get('adj_close')) else None,
-                    'volume':    int(row['volume'])      if pd.notna(row.get('volume'))    else None,
-                })
-                inserted += 1
-        return inserted
-
-    except Exception as e:
-        logger.error(f"  ✗ {ticker}: {e}")
+                conn.execute(
+                    UPSERT_MARKET_PRICE_SQL,
+                    {
+                        "ticker": ticker,
+                        "sector": SECTOR_MAP.get(ticker, "Unknown"),
+                        "date": row["date"],
+                        "open": float(row["open"]) if pd.notna(row.get("open")) else None,
+                        "high": float(row["high"]) if pd.notna(row.get("high")) else None,
+                        "low": float(row["low"]) if pd.notna(row.get("low")) else None,
+                        "close": float(row["close"]) if pd.notna(row.get("close")) else None,
+                        "adj_close": float(row["adj_close"]) if pd.notna(row.get("adj_close")) else None,
+                        "volume": int(row["volume"]) if pd.notna(row.get("volume")) else None,
+                        "loaded_at": row["loaded_at"],
+                    },
+                )
+                processed_rows += 1
+        return processed_rows
+    except Exception as exc:
+        logger.error("Failed to refresh %s: %s", ticker, exc)
         return 0
 
 
 def run_daily_refresh():
-    logger.info(f"Daily refresh — {date.today()}")
-    logger.info("=" * 50)
-    total = 0
+    validate_runtime()
+    logger.info("Daily refresh for %s", date.today())
+    logger.info("%s", "=" * 50)
+
+    total_rows = 0
     for ticker in ALL_TICKERS:
         rows = refresh_ticker(ticker)
         if rows > 0:
-            logger.info(f"  ✓ {ticker:<22} {rows} rows upserted")
+            logger.info("%s %s rows processed", f"{ticker:<22}", rows)
+        total_rows += rows
         time.sleep(0.3)
-        total += rows
-    logger.info(f"Refresh complete — {total} rows upserted")
+
+    logger.info("Refresh complete. %s rows processed.", total_rows)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     run_daily_refresh()

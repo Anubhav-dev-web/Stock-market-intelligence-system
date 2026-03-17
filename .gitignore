@@ -3,3 +3,4 @@ venv/
 __pycache__/
 *.pyc
 data/*.csv
+scripts/airflow/airflow.env

@@ -1,16 +1,19 @@
-# setup_and_load.py
-# Run this ONCE — creates DB schema then loads all data
+import logging
+import os
+import time
+from datetime import UTC, datetime, timedelta
 
-import yfinance as yf
 import pandas as pd
-from sqlalchemy import create_engine, text
-from datetime import datetime, timedelta
+import yfinance as yf
 from dotenv import load_dotenv
-import os, time, logging
+from sqlalchemy import create_engine, text
+
+from market_universe import UNIVERSE
+from runtime_guard import validate_runtime
 from sql_loader import load_sql
 
 load_dotenv()
-logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(message)s')
+logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 logger = logging.getLogger(__name__)
 
 engine = create_engine(
@@ -18,129 +21,114 @@ engine = create_engine(
     f"@{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}/{os.getenv('DB_NAME')}"
 )
 
-# ── STEP 1: Create schema and table ──────────────────────────────────────────
+INSERT_MARKET_PRICE_SQL = text(load_sql("setup_and_load/insert_market_price.sql"))
+LOAD_SUMMARY_SQL = text(load_sql("setup_and_load/load_summary.sql"))
+
+
+def utc_now():
+    return datetime.now(UTC)
+
+
 def create_schema():
     with engine.begin() as conn:
-        conn.execute(text(load_sql('setup_and_load/create_schema.sql')))
-    logger.info("✓ Schema and table created successfully")
+        conn.execute(text(load_sql("setup_and_load/create_schema.sql")))
+    logger.info("Schema and table created successfully")
 
-    # Verify
     with engine.connect() as conn:
-        result = conn.execute(text(load_sql('setup_and_load/check_table_exists.sql')))
-        exists = result.scalar()
-        logger.info(f"✓ Table exists check: {bool(exists)}")
+        exists = conn.execute(text(load_sql("setup_and_load/check_table_exists.sql"))).scalar()
+    logger.info("Table exists check: %s", bool(exists))
 
-# ── STEP 2: Universe ─────────────────────────────────────────────────────────
-UNIVERSE = {
-    'IT': [
-        'TCS.NS','INFY.NS','WIPRO.NS','HCLTECH.NS','TECHM.NS',
-        'LTIM.NS','MPHASIS.NS','PERSISTENT.NS','COFORGE.NS','OFSS.NS'
-    ],
-    'Banking': [
-        'HDFCBANK.NS','ICICIBANK.NS','KOTAKBANK.NS','SBIN.NS','AXISBANK.NS',
-        'BAJFINANCE.NS','BAJAJFINSV.NS','INDUSINDBK.NS','PNB.NS','HDFCLIFE.NS'
-    ],
-    'Pharma': [
-        'SUNPHARMA.NS','DRREDDY.NS','CIPLA.NS','DIVISLAB.NS','APOLLOHOSP.NS',
-        'TORNTPHARM.NS','AUROPHARMA.NS','LUPIN.NS','BIOCON.NS','MAXHEALTH.NS'
-    ],
-    'Energy': [
-        'RELIANCE.NS','ONGC.NS','NTPC.NS','POWERGRID.NS','IOC.NS',
-        'ADANIGREEN.NS','TATAPOWER.NS','COALINDIA.NS','BPCL.NS','ADANIPORTS.NS'
-    ],
-    'FMCG': [
-        'HINDUNILVR.NS','ITC.NS','NESTLEIND.NS','BRITANNIA.NS','DABUR.NS',
-        'MARICO.NS','GODREJCP.NS','COLPAL.NS','EMAMILTD.NS','TATACONSUM.NS'
-    ],
-    'Commodity': ['GC=F','CL=F','SI=F'],
-    'Index':     ['^NSEI','^BSESN','^NSEBANK','^CNXIT','^INDIAVIX','USDINR=X']
-}
 
-# ── STEP 3: Load one ticker ───────────────────────────────────────────────────
 def load_ticker(ticker: str, sector: str, start: str, end: str) -> int:
     try:
-        t  = yf.Ticker(ticker)
-        df = t.history(start=start, end=end, auto_adjust=False)
-
-        if df is None or df.empty:
-            logger.warning(f"  ⚠  No data: {ticker}")
+        history = yf.Ticker(ticker).history(start=start, end=end, auto_adjust=False)
+        if history is None or history.empty:
+            logger.warning("No data returned for %s", ticker)
             return 0
 
-        df.reset_index(inplace=True)
-        df.columns = [c.lower().replace(' ', '_') for c in df.columns]
-        df['date']      = pd.to_datetime(df['date']).dt.date
-        df['ticker']    = ticker
-        df['sector']    = sector
-        df['loaded_at'] = datetime.now()
-        df = df.dropna(subset=['close'])
+        df = history.reset_index()
+        df.columns = [column.lower().replace(" ", "_") for column in df.columns]
+        df["date"] = pd.to_datetime(df["date"]).dt.date
+        df["ticker"] = ticker
+        df["sector"] = sector
+        df["loaded_at"] = utc_now()
+        df = df.dropna(subset=["close"])
 
         if df.empty:
+            logger.warning("No usable close prices found for %s", ticker)
             return 0
 
-        insert_sql = load_sql('setup_and_load/insert_market_price.sql')
         inserted = 0
         with engine.begin() as conn:
             for _, row in df.iterrows():
                 try:
-                    conn.execute(text(insert_sql), {
-                        'ticker':    ticker,
-                        'sector':    sector,
-                        'date':      row['date'],
-                        'open':      float(row['open'])      if pd.notna(row.get('open'))      else None,
-                        'high':      float(row['high'])      if pd.notna(row.get('high'))      else None,
-                        'low':       float(row['low'])       if pd.notna(row.get('low'))       else None,
-                        'close':     float(row['close'])     if pd.notna(row.get('close'))     else None,
-                        'adj_close': float(row['adj_close']) if pd.notna(row.get('adj_close')) else None,
-                        'volume':    int(row['volume'])      if pd.notna(row.get('volume'))    else None,
-                        'loaded_at': row['loaded_at'],
-                    })
+                    conn.execute(
+                        INSERT_MARKET_PRICE_SQL,
+                        {
+                            "ticker": ticker,
+                            "sector": sector,
+                            "date": row["date"],
+                            "open": float(row["open"]) if pd.notna(row.get("open")) else None,
+                            "high": float(row["high"]) if pd.notna(row.get("high")) else None,
+                            "low": float(row["low"]) if pd.notna(row.get("low")) else None,
+                            "close": float(row["close"]) if pd.notna(row.get("close")) else None,
+                            "adj_close": float(row["adj_close"]) if pd.notna(row.get("adj_close")) else None,
+                            "volume": int(row["volume"]) if pd.notna(row.get("volume")) else None,
+                            "loaded_at": row["loaded_at"],
+                        },
+                    )
                     inserted += 1
-                except Exception as row_err:
-                    logger.debug(f"    Row skip: {row_err}")
+                except Exception as row_error:
+                    logger.debug("Skipped one row for %s: %s", ticker, row_error)
         return inserted
-
-    except Exception as e:
-        logger.error(f"  ✗  {ticker}: {e}")
+    except Exception as exc:
+        logger.error("Failed to load %s: %s", ticker, exc)
         return 0
 
-# ── STEP 4: Run full load ─────────────────────────────────────────────────────
+
 def run_load():
-    end   = datetime.now().strftime('%Y-%m-%d')
-    start = (datetime.now() - timedelta(days=2*365)).strftime('%Y-%m-%d')
+    validate_runtime()
+    end_date = utc_now().strftime("%Y-%m-%d")
+    start_date = (utc_now() - timedelta(days=2 * 365)).strftime("%Y-%m-%d")
 
-    logger.info(f"\nLoading 2 years: {start} → {end}")
-    logger.info("=" * 60)
+    logger.info("Loading 2 years of history: %s to %s", start_date, end_date)
+    logger.info("%s", "=" * 60)
 
-    total = 0
-    failed = []
+    total_rows = 0
+    failed_tickers = []
 
     for sector, tickers in UNIVERSE.items():
-        logger.info(f"\n── {sector} ──")
+        logger.info("Sector: %s", sector)
         for ticker in tickers:
-            rows = load_ticker(ticker, sector, start, end)
+            rows = load_ticker(ticker, sector, start_date, end_date)
             if rows > 0:
-                logger.info(f"  ✓  {ticker:<22} {rows:>5,} rows")
+                logger.info("  %s %s rows", f"{ticker:<22}", f"{rows:>5,}")
             else:
-                logger.warning(f"  ⚠  {ticker:<22}     0 rows")
-                failed.append(ticker)
-            total += rows
+                failed_tickers.append(ticker)
+            total_rows += rows
             time.sleep(0.4)
 
-    logger.info(f"\n{'='*60}")
-    logger.info(f"COMPLETE — Total rows: {total:,}")
-    if failed:
-        logger.warning(f"Failed tickers: {failed}")
+    logger.info("%s", "=" * 60)
+    logger.info("Load complete. Total rows inserted: %s", f"{total_rows:,}")
+    if failed_tickers:
+        logger.warning("Tickers with no inserted rows: %s", failed_tickers)
 
-    # Final summary from DB
     with engine.connect() as conn:
-        result = conn.execute(text(load_sql('setup_and_load/load_summary.sql')))
-        logger.info("\n── DB Summary ──")
-        logger.info(f"{'Sector':<12} {'Tickers':>8} {'Rows':>8} {'From':>12} {'To':>12}")
-        logger.info("-" * 55)
-        for r in result:
-            logger.info(f"{r[0]:<12} {r[1]:>8} {r[2]:>8,} {str(r[3]):>12} {str(r[4]):>12}")
+        result = conn.execute(LOAD_SUMMARY_SQL)
+        logger.info("Database summary")
+        logger.info("%-12s %8s %8s %12s %12s", "Sector", "Tickers", "Rows", "From", "To")
+        logger.info("%s", "-" * 55)
+        for row in result:
+            logger.info(
+                "%-12s %8s %8s %12s %12s",
+                row[0],
+                row[1],
+                f"{row[2]:,}",
+                str(row[3]),
+                str(row[4]),
+            )
 
 
-if __name__ == '__main__':
-    create_schema()   # creates table first
-    run_load()        # then loads data
+if __name__ == "__main__":
+    create_schema()
+    run_load()

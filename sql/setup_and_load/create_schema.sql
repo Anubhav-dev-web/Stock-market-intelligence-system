@@ -16,3 +16,8 @@ CREATE TABLE IF NOT EXISTS raw.market_prices (
     loaded_at   TIMESTAMP DEFAULT NOW(),
     CONSTRAINT uq_ticker_date UNIQUE (ticker, date)
 );
+
+CREATE INDEX IF NOT EXISTS idx_market_ticker_date
+    ON raw.market_prices(ticker, date);
+CREATE INDEX IF NOT EXISTS idx_market_sector
+    ON raw.market_prices(sector);

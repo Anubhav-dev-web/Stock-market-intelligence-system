@@ -1,11 +1,13 @@
-# fix_dim_dates.py
-from sqlalchemy import create_engine, text
+import logging
+import os
+
 from dotenv import load_dotenv
-import os, logging
+from sqlalchemy import create_engine, text
+
 from sql_loader import load_sql
 
 load_dotenv()
-logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(message)s')
+logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(message)s")
 logger = logging.getLogger(__name__)
 
 engine = create_engine(
@@ -13,34 +15,30 @@ engine = create_engine(
     f"@{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}/{os.getenv('DB_NAME')}"
 )
 
-def run(sql, msg):
+
+def run(sql_text, message):
     with engine.begin() as conn:
-        conn.execute(text(sql))
-    logger.info(f"✓ {msg}")
+        conn.execute(text(sql_text))
+    logger.info(message)
 
-# Fix column sizes
-run(load_sql('fix_dim_dates/alter_column_sizes.sql'), "Column sizes fixed")
 
-# Now populate dim_dates
-run(load_sql('fix_dim_dates/insert_dim_dates.sql'), "dim_dates populated — 2922 rows")
+run(load_sql("fix_dim_dates/alter_column_sizes.sql"), "Legacy dim_dates columns updated")
+run(load_sql("fix_dim_dates/insert_dim_dates.sql"), "dim_dates synchronized")
+run(load_sql("fix_dim_dates/create_fct_daily_prices.sql"), "fct_daily_prices table ensured")
 
-# Create fct_daily_prices
-run(load_sql('fix_dim_dates/create_fct_daily_prices.sql'), "fct_daily_prices table created")
-
-# Verify
 with engine.connect() as conn:
-    r = conn.execute(text(load_sql('fix_dim_dates/verify_tables.sql')))
-    print("\n── Tables ──")
-    for row in r:
+    tables = conn.execute(text(load_sql("fix_dim_dates/verify_tables.sql")))
+    print("\nTables")
+    for row in tables:
         print(f"  {row[0]}.{row[1]}")
 
-    for tbl, label in [
-        ("analytics.dim_companies",    "dim_companies   "),
-        ("analytics.dim_dates",        "dim_dates       "),
+    for table_name, label in [
+        ("analytics.dim_companies", "dim_companies"),
+        ("analytics.dim_dates", "dim_dates"),
         ("analytics.fct_daily_prices", "fct_daily_prices"),
-        ("raw.market_prices",          "market_prices   "),
+        ("raw.market_prices", "market_prices"),
     ]:
-        r = conn.execute(text(f"SELECT COUNT(*) FROM {tbl}"))
-        print(f"  {label}: {r.scalar():,} rows")
+        row_count = conn.execute(text(f"SELECT COUNT(*) FROM {table_name}")).scalar()
+        print(f"  {label:<16}: {row_count:,} rows")
 
-print("\n✓ Day 2 complete — run: python pipelines/compute_indicators.py")
+print("\nLegacy schema repair complete. Next: python pipelines/compute_indicators.py")

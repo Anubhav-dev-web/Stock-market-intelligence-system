@@ -27,4 +27,16 @@ SELECT
 FROM GENERATE_SERIES('2020-01-01'::DATE,
                      '2027-12-31'::DATE,
                      '1 day'::INTERVAL) AS d
-ON CONFLICT (date_key) DO NOTHING;
+ON CONFLICT (date_key) DO UPDATE SET
+    full_date = EXCLUDED.full_date,
+    day_of_week = EXCLUDED.day_of_week,
+    day_name = EXCLUDED.day_name,
+    day_of_month = EXCLUDED.day_of_month,
+    week_number = EXCLUDED.week_number,
+    month_number = EXCLUDED.month_number,
+    month_name = EXCLUDED.month_name,
+    quarter = EXCLUDED.quarter,
+    year = EXCLUDED.year,
+    is_weekend = EXCLUDED.is_weekend,
+    fy_year = EXCLUDED.fy_year,
+    fy_quarter = EXCLUDED.fy_quarter;
