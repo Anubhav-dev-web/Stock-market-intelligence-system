@@ -3,6 +3,7 @@
 A Python and PostgreSQL ETL pipeline that ingests Indian market data from Yahoo Finance, models it into a star schema, computes technical indicators, and publishes analytics views for downstream reporting.
 
 For a complete setup, execution, and code walkthrough, see `end_to_end_guide.md`.
+For a compact implementation and troubleshooting handoff, see `project_journal.md`.
 
 ## What the project does
 
