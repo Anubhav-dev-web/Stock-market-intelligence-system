@@ -1,13 +1,13 @@
-import google.generativeai as genai
-from sqlalchemy import create_engine, text
-from dotenv import load_dotenv
 import os
+import google.generativeai as genai
+from dotenv import load_dotenv
+from sqlalchemy import create_engine, text
 
 load_dotenv()
 
-GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
-GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
-GEMINI_TIMEOUT_SECONDS = int(os.getenv('GEMINI_TIMEOUT_SECONDS', '30'))
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_TIMEOUT_SECONDS = int(os.getenv("GEMINI_TIMEOUT_SECONDS", "30"))
 
 genai.configure(api_key=GEMINI_API_KEY)
 
@@ -16,17 +16,17 @@ engine = create_engine(
     f"@{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}/{os.getenv('DB_NAME')}"
 )
 
+
 def get_market_snapshot():
     with engine.connect() as conn:
-
         latest_date = conn.execute(text("""
-            SELECT MAX(date_key) 
-            FROM analytics.fct_daily_prices 
+            SELECT MAX(date_key)
+            FROM analytics.fct_daily_prices
             WHERE daily_return_pct IS NOT NULL
         """)).scalar()
 
         sectors = conn.execute(text("""
-            SELECT sector, 
+            SELECT sector,
                    ROUND(AVG(daily_return_pct)::NUMERIC, 2)   AS avg_1d,
                    ROUND(AVG(weekly_return_pct)::NUMERIC, 2)  AS avg_1w,
                    ROUND(AVG(monthly_return_pct)::NUMERIC, 2) AS avg_1m
@@ -37,7 +37,7 @@ def get_market_snapshot():
             AND d.is_commodity = false
             GROUP BY sector
             ORDER BY avg_1d DESC
-        """), {'dt': latest_date}).fetchall()
+        """), {"dt": latest_date}).fetchall()
 
         top_movers = conn.execute(text("""
             SELECT dc.company_name, dc.sector,
@@ -52,7 +52,7 @@ def get_market_snapshot():
             AND f.daily_return_pct IS NOT NULL
             ORDER BY ABS(f.daily_return_pct) DESC
             LIMIT 5
-        """), {'dt': latest_date}).fetchall()
+        """), {"dt": latest_date}).fetchall()
 
         nifty = conn.execute(text("""
             SELECT close_price, daily_return_pct
@@ -89,12 +89,12 @@ def generate_commentary():
     ])
 
     commodity_text = "\n".join([
-        f"  {r[0]}: ₹{r[1]:,.2f} ({r[2]:+.2f}%)"
+        f"  {r[0]}: INR {r[1]:,.2f} ({r[2]:+.2f}%)"
         for r in commodities
     ])
 
-    prompt = f"""You are a senior Indian equity market analyst writing a 
-morning market briefing for institutional investors.
+    prompt = f"""You are a senior Indian equity market analyst writing a quick
+review for an Indian market dashboard.
 
 Date: {latest_date}
 
@@ -109,22 +109,27 @@ TOP MOVERS:
 COMMODITIES IN INR:
 {commodity_text}
 
-Write a professional 3-paragraph market commentary (max 150 words):
-- Paragraph 1: Overall market tone and NIFTY direction
-- Paragraph 2: Sector rotation and standout sectors  
-- Paragraph 3: Key stock moves and brief outlook
+Write exactly 6 short bullet points for a dashboard user:
+1. How the market performed today and NIFTY direction
+2. Strongest sector signal
+3. Weakest or risk sector signal
+4. Important stock mover observation
+5. Commodity or INR-linked impact if relevant
+6. AI suggestion for the current market
 
 Rules:
 - Use specific numbers from the data
-- Write for an Indian institutional investor audience
-- Flowing prose only — no bullet points
-- Mention rupee impact on commodities where relevant
-- Keep it concise and data-driven"""
+- Keep each bullet under 18 words
+- Start every line with "- "
+- Do not write paragraphs
+- Keep language simple for quick review
+- Make the final bullet actionable, not generic
+- Do not say this is financial advice"""
 
     model = genai.GenerativeModel(GEMINI_MODEL)
     response = model.generate_content(
         prompt,
-        request_options={'timeout': GEMINI_TIMEOUT_SECONDS},
+        request_options={"timeout": GEMINI_TIMEOUT_SECONDS},
     )
     return response.text
 
@@ -141,15 +146,15 @@ def save_commentary(commentary: str):
         conn.execute(text("""
             INSERT INTO analytics.ai_commentary (commentary)
             VALUES (:commentary)
-        """), {'commentary': commentary})
-    print("✓ Commentary saved to database")
+        """), {"commentary": commentary})
+    print("OK Commentary saved to database")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     print("Fetching market data from PostgreSQL...")
     commentary = generate_commentary()
-    print("\n── AI Market Commentary ──\n")
+    print("\n--- AI Market Commentary ---\n")
     print(commentary)
-    print("\n" + "─" * 50)
+    print("\n" + "-" * 50)
     save_commentary(commentary)
-    print("✓ Saved to analytics.ai_commentary table")
+    print("OK Saved to analytics.ai_commentary table")

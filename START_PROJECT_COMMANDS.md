@@ -249,6 +249,19 @@ Run this in the terminal where your project environment is activated.
 pip install -r requirements.txt
 ```
 
+If an Airflow task fails with `ModuleNotFoundError` for a project package:
+
+Run this in WSL or Ubuntu terminal from `/mnt/d/DataAnalyst/MKT-1`:
+
+```bash
+cd /mnt/d/DataAnalyst/MKT-1
+source ~/india_market_venv/bin/activate
+pip install -r requirements.txt
+python -c "import google.generativeai; print('Gemini package OK')"
+```
+
+Airflow tasks run with `~/india_market_venv/bin/python`, not the Windows `venv`.
+
 If Airflow cannot find the project Python:
 
 Run this in WSL or Ubuntu terminal from `/mnt/d/DataAnalyst/MKT-1`:
@@ -273,6 +286,19 @@ Run this in WSL or Ubuntu terminal from `/mnt/d/DataAnalyst/MKT-1`:
 ```bash
 bash scripts/airflow/status.sh
 source ~/airflow_venv/bin/activate
+airflow dags list-import-errors
+```
+
+If you edited `airflow_dags/india_market_dag.py` but the UI still shows the old task list:
+
+Run this in WSL or Ubuntu terminal:
+
+```bash
+cd /mnt/d/DataAnalyst/MKT-1
+bash scripts/airflow/stop.sh
+bash scripts/airflow/start.sh
+source ~/airflow_venv/bin/activate
+airflow tasks list india_market_daily
 airflow dags list-import-errors
 ```
 
