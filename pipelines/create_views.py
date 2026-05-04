@@ -17,6 +17,7 @@ engine = create_engine(
 
 VIEW_DEFINITIONS = [
     ("create_views/create_v_commodities_inr.sql", "analytics.v_commodities_inr"),
+    ("create_views/create_v_gold_monthly_returns.sql", "analytics.v_gold_monthly_returns"),
     ("create_views/create_v_sector_performance.sql", "analytics.v_sector_performance"),
     ("create_views/create_v_crude_energy_correlation.sql", "analytics.v_crude_energy_correlation"),
     ("create_views/create_v_portfolio_daily.sql", "analytics.v_portfolio_daily"),

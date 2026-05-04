@@ -2,6 +2,7 @@ import logging
 import os
 
 import pandas as pd
+import numpy as np
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 
@@ -40,7 +41,8 @@ def normalize_raw_dataframe(df):
 
 def insert_fact_rows(df, chunk_size=1000):
     insert_sql = text(load_sql("compute_indicators/insert_fct_daily_prices.sql"))
-    records = df.where(pd.notna(df), None).to_dict(orient="records")
+    clean_df = df.replace([np.inf, -np.inf], np.nan)
+    records = clean_df.where(pd.notna(clean_df), None).to_dict(orient="records")
 
     with engine.begin() as conn:
         for start in range(0, len(records), chunk_size):

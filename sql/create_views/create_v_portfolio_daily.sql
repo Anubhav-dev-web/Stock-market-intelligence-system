@@ -15,6 +15,7 @@ daily AS (
     JOIN weights USING (ticker)
     JOIN analytics.dim_dates AS dates ON fact.date_key = dates.date_key
     WHERE fact.daily_return_pct IS NOT NULL
+      AND fact.daily_return_pct::TEXT <> 'NaN'
     GROUP BY dates.full_date
 ),
 nifty AS (
@@ -22,6 +23,8 @@ nifty AS (
     FROM analytics.fct_daily_prices AS fact
     JOIN analytics.dim_dates AS dates ON fact.date_key = dates.date_key
     WHERE fact.ticker = '^NSEI'
+      AND fact.daily_return_pct IS NOT NULL
+      AND fact.daily_return_pct::TEXT <> 'NaN'
 )
 SELECT
     daily.date,

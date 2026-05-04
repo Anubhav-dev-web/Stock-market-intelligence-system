@@ -39,6 +39,7 @@ with DAG(
     catchup=False,
     tags=["india", "nse", "production"],
 ) as dag:
+
     fetch_latest_prices = BashOperator(
         task_id="fetch_latest_prices",
         bash_command=command("daily_refresh.py"),
@@ -54,4 +55,9 @@ with DAG(
         bash_command=command("create_views.py"),
     )
 
-    fetch_latest_prices >> compute_indicators >> create_views
+    generate_ai_commentary = BashOperator(
+        task_id="generate_ai_commentary",
+        bash_command=command("ai_commentary.py"),
+    )
+
+    fetch_latest_prices >> compute_indicators >> create_views >> generate_ai_commentary
