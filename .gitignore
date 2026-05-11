@@ -4,3 +4,5 @@ __pycache__/
 *.pyc
 data/*.csv
 scripts/airflow/airflow.env
+*.md
+!README.md
